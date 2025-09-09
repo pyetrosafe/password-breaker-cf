@@ -1,27 +1,36 @@
 import zipfile
 import time
 import sys
+import itertools
+import string
 
-def testar_senha_zip(arquivo_zip, wordlist):
+def testar_senha_zip_forca_bruta(arquivo_zip, max_comprimento=4):
     """
-    Função que simula um teste de força de senha em um arquivo .zip
-    usando uma wordlist.
+    Função que simula um ataque de força bruta pura em um arquivo .zip
+    gerando senhas aleatoriamente.
 
     Args:
         arquivo_zip (str): O caminho para o arquivo .zip.
-        wordlist (str): O caminho para o arquivo com a wordlist.
+        max_comprimento (int): O comprimento máximo das senhas a serem testadas.
     """
-    print("Iniciando simulação de teste de força de senha...")
+    # Conjunto de caracteres a serem usados na geração de senhas
+    caracteres = string.ascii_letters + string.digits  # Letras (a-z, A-Z) e números (0-9)
+
+    print(f"Iniciando simulação de força bruta para o arquivo '{arquivo_zip}'...")
+    print(f"Testando senhas com até {max_comprimento} caracteres.")
     print("-" * 40)
 
     try:
         with zipfile.ZipFile(arquivo_zip, 'r') as zip_file:
-            with open(wordlist, 'r', encoding='utf-8', errors='ignore') as f:
-                tentativas = 0
-                inicio = time.time()  # Marca o tempo de início do processo
+            tentativas = 0
+            inicio = time.time()  # Marca o tempo de início do processo
 
-                for linha in f:
-                    senha = linha.strip()  # Remove espaços e quebras de linha
+            # Itera sobre o comprimento das senhas, de 1 até o comprimento máximo
+            for comprimento in range(1, max_comprimento + 1):
+                # Usa itertools.product para gerar todas as combinações
+                # Exemplo: para comprimento=2, gera 'aa', 'ab', 'ac', etc.
+                for combinacao in itertools.product(caracteres, repeat=comprimento):
+                    senha = "".join(combinacao)
                     tentativas += 1
 
                     try:
@@ -38,27 +47,28 @@ def testar_senha_zip(arquivo_zip, wordlist):
 
                         return True
                     except (RuntimeError, zipfile.BadZipFile):
-                        print(f"[FALHA] Tentativa {tentativas}: {senha}")
+                        # Se a senha estiver errada, continua para a próxima
+                        if tentativas % 100000 == 0:
+                            print(f"--> Tentativas: {tentativas} | Tempo: {time.time() - inicio:.2f}s")
 
     except FileNotFoundError:
-        print(f"Erro: O arquivo .zip '{arquivo_zip}' ou a wordlist não foram encontrados.")
+        print(f"Erro: O arquivo .zip '{arquivo_zip}' não foi encontrado.")
         return False
     except Exception as e:
         print(f"Ocorreu um erro: {e}")
         return False
 
-    print("\n[FALHA] A senha não foi encontrada na wordlist.")
+    print(f"\n[FALHA] A senha não foi encontrada após {tentativas} tentativas.")
     return False
 
 # ----- Configurações e Verificação de Argumentos -----
-
-# Verifica se o nome do arquivo .zip foi passado como argumento
 if len(sys.argv) < 2:
-    print("Uso: python cracker_simulador.py <nome_do_arquivo.zip>")
-    sys.exit(1) # Encerra o programa com um código de erro
+    print("Uso: python cracker_simulador.py <nome_do_arquivo.zip> [comprimento_maximo]")
+    sys.exit(1)
 
-nome_arquivo_zip = sys.argv[1] # Pega o primeiro argumento da linha de comando
-nome_wordlist = "wordlist.txt" # O nome da wordlist continua fixo
+nome_arquivo_zip = sys.argv[1]
+# Se um segundo argumento for fornecido, ele define o comprimento máximo
+max_comprimento = int(sys.argv[2]) if len(sys.argv) > 2 else 4
 
 # Chama a função para iniciar a simulação
-testar_senha_zip(nome_arquivo_zip, nome_wordlist)
+testar_senha_zip_forca_bruta(nome_arquivo_zip, max_comprimento)
