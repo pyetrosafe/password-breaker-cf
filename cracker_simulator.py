@@ -3,21 +3,21 @@ import time
 import sys
 import itertools
 import string
+import argparse
 
-def testar_senha_zip_forca_bruta(arquivo_zip, max_comprimento=4):
+def testar_senha_zip_forca_bruta(arquivo_zip, min_len, max_len, charset):
     """
     Função que simula um ataque de força bruta pura em um arquivo .zip
-    gerando senhas aleatoriamente.
+    gerando senhas com base nos argumentos fornecidos.
 
     Args:
         arquivo_zip (str): O caminho para o arquivo .zip.
-        max_comprimento (int): O comprimento máximo das senhas a serem testadas.
+        min_len (int): O comprimento mínimo das senhas.
+        max_len (int): O comprimento máximo das senhas.
+        charset (str): O conjunto de caracteres a ser usado na geração.
     """
-    # Conjunto de caracteres a serem usados na geração de senhas
-    caracteres = string.ascii_letters + string.digits  # Letras (a-z, A-Z) e números (0-9)
-
     print(f"Iniciando simulação de força bruta para o arquivo '{arquivo_zip}'...")
-    print(f"Testando senhas com até {max_comprimento} caracteres.")
+    print(f"Testando senhas de {min_len} a {max_len} caracteres.")
     print("-" * 40)
 
     try:
@@ -25,11 +25,10 @@ def testar_senha_zip_forca_bruta(arquivo_zip, max_comprimento=4):
             tentativas = 0
             inicio = time.time()  # Marca o tempo de início do processo
 
-            # Itera sobre o comprimento das senhas, de 1 até o comprimento máximo
-            for comprimento in range(1, max_comprimento + 1):
+            # Itera sobre o comprimento das senhas, do mínimo ao máximo
+            for comprimento in range(min_len, max_len + 1):
                 # Usa itertools.product para gerar todas as combinações
-                # Exemplo: para comprimento=2, gera 'aa', 'ab', 'ac', etc.
-                for combinacao in itertools.product(caracteres, repeat=comprimento):
+                for combinacao in itertools.product(charset, repeat=comprimento):
                     senha = "".join(combinacao)
                     tentativas += 1
 
@@ -47,7 +46,7 @@ def testar_senha_zip_forca_bruta(arquivo_zip, max_comprimento=4):
 
                         return True
                     except (RuntimeError, zipfile.BadZipFile):
-                        # Se a senha estiver errada, continua para a próxima
+                        # Para manter a tela limpa, mostra o progresso a cada X tentativas
                         if tentativas % 100000 == 0:
                             print(f"--> Tentativas: {tentativas} | Tempo: {time.time() - inicio:.2f}s")
 
@@ -61,14 +60,63 @@ def testar_senha_zip_forca_bruta(arquivo_zip, max_comprimento=4):
     print(f"\n[FALHA] A senha não foi encontrada após {tentativas} tentativas.")
     return False
 
-# ----- Configurações e Verificação de Argumentos -----
-if len(sys.argv) < 2:
-    print("Uso: python cracker_simulador.py <nome_do_arquivo.zip> [comprimento_maximo]")
-    sys.exit(1)
+# ----- Configurações e Análise de Argumentos (usando argparse) -----
+def main():
+    """Função principal para analisar argumentos e iniciar o teste."""
+    parser = argparse.ArgumentParser(
+        description="Simulador de teste de força de senha para arquivos .zip."
+    )
 
-nome_arquivo_zip = sys.argv[1]
-# Se um segundo argumento for fornecido, ele define o comprimento máximo
-max_comprimento = int(sys.argv[2]) if len(sys.argv) > 2 else 4
+    # Argumento obrigatório para o nome do arquivo .zip
+    parser.add_argument("arquivo_zip", help="O caminho para o arquivo .zip.")
 
-# Chama a função para iniciar a simulação
-testar_senha_zip_forca_bruta(nome_arquivo_zip, max_comprimento)
+    # Argumentos para o comprimento da senha
+    parser.add_argument("-min", "--min_len", type=int, default=1,
+                        help="Comprimento mínimo da senha (padrão: 1).")
+    parser.add_argument("-max", "--max_len", type=int, default=4,
+                        help="Comprimento máximo da senha (padrão: 4).")
+
+    # Argumentos para o conjunto de caracteres
+    parser.add_argument("-w", "--word", action="store_true",
+                        help="Testar apenas letras (insensitive).")
+    parser.add_argument("-d", "--digits", action="store_true",
+                        help="Testar apenas dígitos.")
+    parser.add_argument("-s", "--symbols", action="store_true",
+                        help="Testar apenas símbolos.")
+    parser.add_argument("-a", "--alphanum", action="store_true",
+                        help="Testar caracteres alfanuméricos (insensitive).")
+    parser.add_argument("-u", "--upper", action="store_true",
+                        help="Adiciona letras maiúsculas ao conjunto (-a ou -w).")
+    parser.add_argument("-l", "--lower", action="store_true",
+                        help="Adiciona letras minúsculas ao conjunto (-a ou -w).")
+
+    args = parser.parse_args()
+
+    # Define o conjunto de caracteres padrão
+    charset = string.ascii_letters + string.digits + string.punctuation
+
+    # Lógica para construir o conjunto de caracteres com base nos argumentos
+    if args.word or args.alphanum:
+        charset = ""
+        if args.upper or args.lower:
+            if args.upper:
+                charset += string.ascii_uppercase
+            if args.lower:
+                charset += string.ascii_lowercase
+        else: # Padrão se não for especificado maiúscula ou minúscula
+            charset = string.ascii_letters
+
+        if args.alphanum:
+            charset += string.digits
+
+    if args.digits:
+        charset = string.digits
+
+    if args.symbols:
+        charset = string.punctuation
+
+    # Chama a função principal com os argumentos
+    testar_senha_zip_forca_bruta(args.arquivo_zip, args.min_len, args.max_len, charset)
+
+if __name__ == "__main__":
+    main()
