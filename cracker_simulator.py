@@ -35,6 +35,7 @@ def testar_senha_rar_subprocess(file_path: str, senha: str) -> bool:
 ## MODIFICADO: O worker agora é muito mais simples.
 ## Ele recebe UMA tarefa e retorna o resultado.
 def worker(task_args) -> tuple[bool, str | None]:
+    time.sleep(0.01)
     """
     Worker que testa UMA senha e retorna se foi bem-sucedido.
     """
@@ -114,7 +115,7 @@ def testar_senha_sequencial(file_path: str, file_type: str, min_len: int, max_le
 
 ## REESCRITO: A função paralela agora usa 'imap_unordered' para latência mínima.
 ## MODIFICADO: A função agora aceita 'start_step'
-def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len: int, charset: str, num_workers: int, start_step: int) -> None:
+def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len: int, charset: str, num_workers: int, start_step: int, chunksize: int) -> None:
     print(f"Modo de execução: Paralelo (usando {num_workers} processos)")
     inicio = time.time()
     senha_encontrada = None
@@ -139,9 +140,9 @@ def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len:
         print(f"\nIniciando testes para senhas de {comprimento} caracteres...")
 
         ## MODIFICADO: A barra de progresso agora usa o parâmetro 'initial'
-        with multiprocessing.Pool(processes=num_workers) as pool, tqdm(total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step) as pbar:
+        with multiprocessing.Pool(processes=num_workers) as pool, tqdm(total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step, mininterval=0.01) as pbar:
             # imap_unordered distribui as tarefas e retorna os resultados assim que ficam prontos
-            for sucesso, senha in pool.imap_unordered(worker, tasks_generator, chunksize=5):
+            for sucesso, senha in pool.imap_unordered(worker, tasks_generator, chunksize=1):
                 pbar.update(1)
                 if sucesso:
                     senha_encontrada = senha
@@ -159,6 +160,33 @@ def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len:
     else:
         print("\n[FALHA] Senha não encontrada.")
 
+def test(file_path, file_type, args) -> None:
+    # Testes de desempenho com diferentes números de workers e chunksizes
+    # Adiciona um conjunto padrão de caracteres
+    char_set = set()
+    charset = char_set.update(list(string.ascii_letters + string.digits))
+    charset = "".join(sorted(list(char_set)))
+
+    args.min_len = 2
+    args.max_len = 2
+
+    print("-" * 50)
+    print(f"CPU Count: {multiprocessing.cpu_count()}")
+    print(f"Alvo: {file_path} (Tipo: {file_type})")
+    print(f"Charset: '{charset[:40]}...' ({len(charset)} caracteres)")
+    print(f"Comprimento: de {args.min_len} a {args.max_len}")
+    print("-" * 50)
+
+    testar_senha_sequencial(file_path, file_type, args.min_len, args.max_len, charset, args.step)
+
+    for workers in [1, 2, 4, 8, 16, 32, 64, 128]:
+        args.workers = workers
+
+        for chunksize in [1, 2, 5, 10, 20, 50, 100, 200]:
+            print("-" * 50)
+            print(f"Workers: {args.workers}, Chunksize: {chunksize}")
+            print("-" * 50)
+            testar_senha_paralelo(file_path, file_type, args.min_len, args.max_len, charset, args.workers, args.step, chunksize)
 
 # ... (A função main continua a mesma)
 def main() -> None:
@@ -170,14 +198,16 @@ def main() -> None:
     parser.add_argument("-min", "--min_len", type=int, default=1, help="Comprimento mínimo da senha.")
     parser.add_argument("-max", "--max_len", type=int, default=8, help="Comprimento máximo da senha.")
     parser.add_argument("-d", "--digitos", action="store_true", help="Incluir dígitos (0-9).")
-    parser.add_argument("-l", "--letras", action="store_true", help="Incluir letras minúsculas (a-z).")
-    parser.add_argument("-u", "--maiusculas", action="store_true", help="Incluir letras maiúsculas (A-Z).")
+    parser.add_argument("-l", "--lowercase", action="store_true", help="Incluir letras minúsculas (a-z).")
+    parser.add_argument("-u", "--uppercase", action="store_true", help="Incluir letras maiúsculas (A-Z).")
+    parser.add_argument("-w", "--letters", action="store_true", help="Incluir letras case insensitive (a-zA-Z).")
     parser.add_argument("-s", "--simbolos", action="store_true", help="Incluir símbolos.")
     parser.add_argument("-a", "--alphanum", action="store_true", help="Atalho para letras e dígitos.")
     parser.add_argument("-m", "--multithread", action="store_true", help="Ativar modo paralelo com múltiplos processos.")
     parser.add_argument("--workers", type=int, default=os.cpu_count(), help=f"Número de processos a serem utilizados (padrão: {os.cpu_count()}).")
     ## NOVO: Argumento para definir o laço inicial.
     parser.add_argument("--step", type=int, default=0, help="Número do laço (iteração) para iniciar o teste. Aplica-se ao primeiro comprimento do intervalo.")
+    parser.add_argument("--test", action="store_true", help="Ativar modo paralelo com múltiplos processos.")
     args = parser.parse_args()
 
     # ... (lógica de seleção de file_type e charset, sem alterações)
@@ -191,19 +221,27 @@ def main() -> None:
         print(f"[ERRO] Formato de ficheiro não suportado: '{file_path}'. Use .zip ou .rar.")
         return
 
+    # For test execution only
+    if args.test:
+        test(file_path, file_type, args)
+        return
+
     char_set = set()
     if args.alphanum: char_set.update(list(string.ascii_letters + string.digits))
     if args.digitos: char_set.update(list(string.digits))
-    if args.letras: char_set.update(list(string.ascii_lowercase))
-    if args.maiusculas: char_set.update(list(string.ascii_uppercase))
+    if args.lowercase: char_set.update(list(string.ascii_lowercase))
+    if args.uppercase: char_set.update(list(string.ascii_uppercase))
+    if args.letters: char_set.update(list(string.ascii_letters))
     if args.simbolos: char_set.update(list(string.punctuation))
-    if not char_set: char_set.update(list(string.ascii_letters + string.digits))
+    if not char_set: char_set.update(list(string.ascii_letters + string.digits + string.punctuation))
     charset = "".join(sorted(list(char_set)))
     if not os.path.exists(file_path):
         print(f"[ERRO] O ficheiro '{file_path}' não foi encontrado.")
         return
 
+    chunksize=20
     print("-" * 50)
+    print(f"CPU Count: {multiprocessing.cpu_count()}")
     print(f"Alvo: {file_path} (Tipo: {file_type})")
     print(f"Charset: '{charset[:40]}...' ({len(charset)} caracteres)")
     print(f"Comprimento: de {args.min_len} a {args.max_len}")
@@ -211,7 +249,7 @@ def main() -> None:
 
     ## MODIFICADO: Passa o 'args.step' para as funções de teste
     if args.multithread:
-        testar_senha_paralelo(file_path, file_type, args.min_len, args.max_len, charset, args.workers, args.step)
+        testar_senha_paralelo(file_path, file_type, args.min_len, args.max_len, charset, args.workers, args.step, chunksize)
     else:
         testar_senha_sequencial(file_path, file_type, args.min_len, args.max_len, charset, args.step)
 
