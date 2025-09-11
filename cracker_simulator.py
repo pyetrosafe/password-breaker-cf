@@ -57,10 +57,9 @@ def worker(task_args) -> tuple[bool, str | None]:
         return (True, senha)
     return (False, None)
 
-
 ## MODIFICADO: A função agora aceita 'start_step'
 def testar_senha_sequencial(file_path: str, file_type: str, min_len: int, max_len: int, charset: str, start_step: int) -> None:
-    print("Modo de execução: Sequencial (single-thread)")
+    print("Modo de execução: Sequencial (single-thread)\n")
     inicio = time.time()
     tentativas_totais = 0
 
@@ -82,12 +81,12 @@ def testar_senha_sequencial(file_path: str, file_type: str, min_len: int, max_le
                 ## MODIFICADO: Lógica para saltar para o 'step' inicial
                 initial_step = 0
                 if start_step > 0 and comprimento == min_len:
-                    print(f"Saltando para o laço inicial {start_step}...")
+                    print(f"Saltando para o laço inicial {start_step}...\n")
                     combinacoes = itertools.islice(combinacoes, start_step, None)
                     initial_step = start_step
 
                 ## MODIFICADO: A barra de progresso agora usa o parâmetro 'initial'
-                for combinacao in tqdm(combinacoes, total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step):
+                for combinacao in tqdm(combinacoes, total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step, dynamic_ncols=True):
                     senha = "".join(combinacao)
                     tentativas_totais += 1
                     senha_correta = False
@@ -112,11 +111,10 @@ def testar_senha_sequencial(file_path: str, file_type: str, min_len: int, max_le
     except Exception as e:
         print(f"\n[ERRO] Ocorreu um erro inesperado: {e}")
 
-
 ## REESCRITO: A função paralela agora usa 'imap_unordered' para latência mínima.
 ## MODIFICADO: A função agora aceita 'start_step'
 def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len: int, charset: str, num_workers: int, start_step: int, chunksize: int) -> None:
-    print(f"Modo de execução: Paralelo (usando {num_workers} processos)")
+    print(f"Modo de execução: Paralelo (usando {num_workers} processo(s))")
     inicio = time.time()
     senha_encontrada = None
 
@@ -137,10 +135,10 @@ def testar_senha_paralelo(file_path: str, file_type: str, min_len: int, max_len:
         # Cria um gerador de tarefas para os workers
         tasks_generator = ((file_path, file_type, s) for s in senhas_generator)
 
-        print(f"\nIniciando testes para senhas de {comprimento} caracteres...")
+        print(f"\nIniciando testes para senhas de {comprimento} caracteres...\n")
 
         ## MODIFICADO: A barra de progresso agora usa o parâmetro 'initial'
-        with multiprocessing.Pool(processes=num_workers) as pool, tqdm(total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step, mininterval=0.01) as pbar:
+        with multiprocessing.Pool(processes=num_workers) as pool, tqdm(total=total_combinacoes, desc=f"Testando {comprimento} chars", unit="pwd", initial=initial_step, dynamic_ncols=True, mininterval=0.01) as pbar:
             # imap_unordered distribui as tarefas e retorna os resultados assim que ficam prontos
             for sucesso, senha in pool.imap_unordered(worker, tasks_generator, chunksize=1):
                 pbar.update(1)
@@ -164,26 +162,34 @@ def test(file_path, file_type, args) -> None:
     # Testes de desempenho com diferentes números de workers e chunksizes
     # Adiciona um conjunto padrão de caracteres
     char_set = set()
-    charset = char_set.update(list(string.ascii_letters + string.digits))
+    charset = char_set.update(list(string.digits))
     charset = "".join(sorted(list(char_set)))
 
-    args.min_len = 2
-    args.max_len = 2
+    args.min_len = args.max_len = 4
+
+    print("\n" + ("-" * 50))
+    print("# Testes de desempenho\n" )
 
     print("-" * 50)
-    print(f"CPU Count: {multiprocessing.cpu_count()}")
-    print(f"Alvo: {file_path} (Tipo: {file_type})")
-    print(f"Charset: '{charset[:40]}...' ({len(charset)} caracteres)")
-    print(f"Comprimento: de {args.min_len} a {args.max_len}")
+    print(f"CPU Count: {multiprocessing.cpu_count()}\n")
+    print(f"Alvo: {file_path} (Tipo: {file_type})\n")
+    print(f"Charset: '{charset[:40]}...' ({len(charset)} caracteres)\n")
+    print(f"Comprimento: de {args.min_len} a {args.max_len}\n")
     print("-" * 50)
 
+    print("\n" + ("-" * 50))
+    print("#  Sequencial\n" )
     testar_senha_sequencial(file_path, file_type, args.min_len, args.max_len, charset, args.step)
+    print("\n" + ("-" * 50))
 
-    for workers in [1, 2, 4, 8, 16, 32, 64, 128]:
+    print("\n" + ("-" * 50))
+    print("# Paralelos" )
+
+    for workers in [2, 4, 8, 16, 32, 64, 128]:
         args.workers = workers
 
-        for chunksize in [1, 2, 5, 10, 20, 50, 100, 200]:
-            print("-" * 50)
+        for chunksize in [1, 2, 5, 10, 20, 50, 100, 200, 500]:
+            print("\n" + ("-" * 50))
             print(f"Workers: {args.workers}, Chunksize: {chunksize}")
             print("-" * 50)
             testar_senha_paralelo(file_path, file_type, args.min_len, args.max_len, charset, args.workers, args.step, chunksize)
@@ -226,6 +232,14 @@ def main() -> None:
         test(file_path, file_type, args)
         return
 
+    if args.min_len < 1 or args.max_len < args.min_len:
+        print("[ERRO] Valores inválidos para comprimento mínimo/máximo.")
+        return
+
+    if args.workers < 2:
+        print("[ERRO] O número de processos deve ser pelo menos 2.")
+        return
+
     char_set = set()
     if args.alphanum: char_set.update(list(string.ascii_letters + string.digits))
     if args.digitos: char_set.update(list(string.digits))
@@ -254,5 +268,14 @@ def main() -> None:
         testar_senha_sequencial(file_path, file_type, args.min_len, args.max_len, charset, args.step)
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    main()
+    try:
+        multiprocessing.freeze_support()
+        main()
+    except KeyboardInterrupt:
+        print("\n[INFO] Execução interrompida pelo usuário. Encerrando...")
+        try:
+            exit(0)
+        except SystemExit:
+            os._exit(0)
+    except Exception as e:
+        print(f"\n[ERRO FATAL] Ocorreu um erro inesperado: {e}")
