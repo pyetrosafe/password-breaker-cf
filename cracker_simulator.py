@@ -80,6 +80,10 @@ RAR_METHOD_TEST = 'rarfile'
 # 'subprocess' usa o comando 'unzip' do sistema, que pode ser mais robusto
 ZIP_METHOD_TEST = 'zipfile'
 
+class PasswordNotNeeded(Exception):
+    """Exceção personalizada para indicar que o arquivo não precisa de senha."""
+    pass
+
 # Função para criar um arquivo de teste ZIP/RAR com senha
 def criar_arquivo_teste(file_path, senha, type='zip'):
     """Cria um arquivo rar de teste com senha."""
@@ -128,14 +132,18 @@ def testar_senha_rar_rarfile(file_path: str, senha: str) -> bool:
         # print(f"Testando senha RAR com rarfile: {senha}")
         with rarfile.RarFile(file_path, 'r') as rf:
             needs_password = rf.needs_password()
+            if not needs_password:
+                raise PasswordNotNeeded
             rf.setpassword(senha)
-            rf.testrar(senha)
+            rf.testrar()
         return True
     except rarfile.NoCrypto:
         return needs_password
     except rarfile.RarWrongPassword:
         # print(f"Senha incorreta: {senha}")
         return False
+    except PasswordNotNeeded:
+        raise PasswordNotNeeded(f'[INFO] O arquivo {file_path} não precisa de senha.')
     except Exception as e:
         # if not getattr(testar_senha_rar_rarfile, 'has_printed_error', False):
             # testar_senha_rar_rarfile.has_printed_error = True
@@ -203,7 +211,7 @@ def worker(task_args) -> tuple[bool, str | None]:
 
 # Testa senhas de forma sequencial
 # A função agora aceita 'session_manager' e 'session_data'
-def testar_senha_sequencial(session_manager: SessionManager, session_data: dict, testing: bool) -> None:
+def testar_senha_sequencial(session_manager: SessionManager, session_data: dict, testing: bool = False) -> None:
     file_path = session_data['target_file']
     file_type = session_data['file_type']
     min_len = session_data['current_len']
@@ -300,12 +308,17 @@ def testar_senha_sequencial(session_manager: SessionManager, session_data: dict,
 
         return {'modo': 'Sequencial', 'workers': 'N/A', 'chunksize': 'N/A', 'tempo': (total_time), 'rate': rate, 'founded': senha is not None}
 
+    except PasswordNotNeeded as pn:
+        print(f"\n{pn}")
+        session_data['status'] = 'no_password_needed'
+        if not testing:
+            session_manager.update_session(file_path, session_data)
     except Exception as e:
         print(f"\n[ERRO] Ocorreu um erro inesperado: {e}")
 
 # A função paralela agora usa 'imap_unordered' para latência mínima.
 # A função agora aceita 'start_step'
-def testar_senha_paralelo(session_manager: SessionManager, session_data: dict, num_workers: int, chunksize: int, testing: bool) -> None:
+def testar_senha_paralelo(session_manager: SessionManager, session_data: dict, num_workers: int, chunksize: int, testing: bool = False) -> None:
     # Extrai parâmetros da sessão
     file_path = session_data['target_file']
     file_type = session_data['file_type']
@@ -321,91 +334,100 @@ def testar_senha_paralelo(session_manager: SessionManager, session_data: dict, n
     # Salva o progresso a cada 1000 tentativas
     SAVE_INTERVAL = 1000
 
-    for comprimento in range(min_len, max_len + 1):
-        if senha_encontrada: break
+    try:
+        for comprimento in range(min_len, max_len + 1):
+            if senha_encontrada: break
 
-        session_data['current_len'] = comprimento
-        total_combinacoes = len(charset) ** comprimento
-        # Cria um gerador de senhas (eficiente em memória)
-        senhas_generator = ("".join(p) for p in itertools.product(charset, repeat=comprimento))
+            session_data['current_len'] = comprimento
+            total_combinacoes = len(charset) ** comprimento
+            # Cria um gerador de senhas (eficiente em memória)
+            senhas_generator = ("".join(p) for p in itertools.product(charset, repeat=comprimento))
 
-        # Lógica para saltar para o 'step' inicial
-        initial_step = 0
-        if start_step > 0 and comprimento == min_len:
-            print(f"Saltando para o laço inicial {start_step}...")
-            senhas_generator = itertools.islice(senhas_generator, start_step, None)
-            initial_step = start_step
+            # Lógica para saltar para o 'step' inicial
+            initial_step = 0
+            if start_step > 0 and comprimento == min_len:
+                print(f"Saltando para o laço inicial {start_step}...")
+                senhas_generator = itertools.islice(senhas_generator, start_step, None)
+                initial_step = start_step
 
-        # Cria um gerador de tarefas para os workers
-        tasks_generator = ((file_path, file_type, s) for s in senhas_generator)
+            # Cria um gerador de tarefas para os workers
+            tasks_generator = ((file_path, file_type, s) for s in senhas_generator)
 
-        print(f"\nIniciando testes para senhas de {comprimento} caracteres(s)...\n")
+            print(f"\nIniciando testes para senhas de {comprimento} caracteres(s)...\n")
 
-        # A barra de progresso agora usa o parâmetro 'initial'
-        with multiprocessing.Pool(processes=num_workers) as pool, \
-        tqdm(total=total_combinacoes, desc=f"Testando {comprimento} caracteres(s)", unit="pwd", initial=initial_step, dynamic_ncols=True, mininterval=0.01) as pbar:
-            # imap_unordered distribui as tarefas e retorna os resultados assim que ficam prontos
-            for sucesso, senha in pool.imap_unordered(worker, tasks_generator, chunksize):
-                pbar.update(1)
-                session_data['last_password'] = senha
+            # A barra de progresso agora usa o parâmetro 'initial'
+            with multiprocessing.Pool(processes=num_workers) as pool, \
+            tqdm(total=total_combinacoes, desc=f"Testando {comprimento} caracteres(s)", unit="pwd", initial=initial_step, dynamic_ncols=True, mininterval=0.01) as pbar:
+                # imap_unordered distribui as tarefas e retorna os resultados assim que ficam prontos
+                for sucesso, senha in pool.imap_unordered(worker, tasks_generator, chunksize):
+                    pbar.update(1)
+                    session_data['last_password'] = senha
 
-                # Salvamento periódico
-                if not testing and (pbar.n > 0 and pbar.n % SAVE_INTERVAL == 0):
-                    session_data['last_step'] = pbar.n
-                    session_data['last_update'] = datetime.now().isoformat()
-                    session_manager.update_session(file_path, session_data)
+                    # Salvamento periódico
+                    if not testing and (pbar.n > 0 and pbar.n % SAVE_INTERVAL == 0):
+                        session_data['last_step'] = pbar.n
+                        session_data['last_update'] = datetime.now().isoformat()
+                        session_manager.update_session(file_path, session_data)
 
-                if sucesso:
-                    senha_encontrada = senha
-                    pool.terminate()
-                    # pbar.update(total_combinacoes - pbar.n)
-                    break
+                    if sucesso:
+                        senha_encontrada = senha
+                        pool.terminate()
+                        # pbar.update(total_combinacoes - pbar.n)
+                        break
 
-        # Reseta o start_step para o próximo comprimento de senha
-        start_step = 0
+            # Reseta o start_step para o próximo comprimento de senha
+            start_step = 0
 
-    fim = time.perf_counter()
-    total_time = fim - inicio
+        fim = time.perf_counter()
+        total_time = fim - inicio
 
-    # Captura a taxa de processamento manual
-    tentativas_totais = sum(len(charset) ** i for i in range(min_len, (comprimento if comprimento > min_len else min_len))) + pbar.n
-    rate = tentativas_totais / total_time if total_time > 0 else 0
+        # Captura a taxa de processamento manual
+        tentativas_totais = sum(len(charset) ** i for i in range(min_len, (comprimento if comprimento > min_len else min_len))) + pbar.n
+        rate = tentativas_totais / total_time if total_time > 0 else 0
 
-    # print(f"\nTaxa de processamento (manual): {rate:.2f} senhas/segundo")
-    # print(f"Total de combinações: {tentativas_totais}")
-    # print(f"Tempo total: {total_time:.2f} segundos")
+        # print(f"\nTaxa de processamento (manual): {rate:.2f} senhas/segundo")
+        # print(f"Total de combinações: {tentativas_totais}")
+        # print(f"Tempo total: {total_time:.2f} segundos")
 
-    # Atualiza o estado final da sessão
-    session_data['last_step'] = pbar.n
-    session_data['last_update'] = datetime.now().isoformat()
+        # Atualiza o estado final da sessão
+        session_data['last_step'] = pbar.n
+        session_data['last_update'] = datetime.now().isoformat()
 
-    print("\n" + "-" * 50)
+        print("\n" + "-" * 50)
 
-    if senha_encontrada:
-        # A mensagem de sucesso é movida para aqui para garantir que aparece depois da barra de progresso
-        session_data['status'] = 'found'
-        session_data['found_password'] = senha
+        if senha_encontrada:
+            # A mensagem de sucesso é movida para aqui para garantir que aparece depois da barra de progresso
+            session_data['status'] = 'found'
+            session_data['found_password'] = senha
 
-        print(f"\n[SUCESSO] Senha encontrada: {senha_encontrada}")
-        print(f"\nTotal de tentativas: {tentativas_totais}")
-    else:
-        session_data['status'] = 'failed'
-        print(f"\n[FALHA] Senha não encontrada após {tentativas_totais} tentativas.")
+            print(f"\n[SUCESSO] Senha encontrada: {senha_encontrada}")
+            print(f"\nTotal de tentativas: {tentativas_totais}")
+        else:
+            session_data['status'] = 'failed'
+            print(f"\n[FALHA] Senha não encontrada após {tentativas_totais} tentativas.")
 
-    print(f"\nTempo total: {total_time:.4f} segundos\n")
-    print("-" * 50)
+        print(f"\nTempo total: {total_time:.4f} segundos\n")
+        print("-" * 50)
 
-    if not testing:
-        session_manager.update_session(file_path, session_data)
+        if not testing:
+            session_manager.update_session(file_path, session_data)
 
-    return {'modo': 'Paralelo', 'workers': num_workers, 'chunksize': chunksize, 'tempo': (total_time), 'rate': rate, 'founded': senha_encontrada is not None}
+        return {'modo': 'Paralelo', 'workers': num_workers, 'chunksize': chunksize, 'tempo': (total_time), 'rate': rate, 'founded': senha_encontrada is not None}
+
+    except PasswordNotNeeded as pn:
+        print(f"\n{pn}")
+        session_data['status'] = 'no_password_needed'
+        if not testing:
+            session_manager.update_session(file_path, session_data)
+    except Exception as e:
+        print(f"\n[ERRO] Ocorreu um erro inesperado: {e}")
 
 # Testes de desempenho com diferentes números de workers e chunksizes
 def benchmark(args, file_path) -> None:
 
     file_path = file_path or ('benchmark.zip' if args.benchmark else 'benchmark.rar')
 
-    criar_arquivo_teste(file_path, '1234', 'rar' if file_path.lower().endswith('.rar') else 'zip')
+    criar_arquivo_teste(file_path, '890', 'rar' if file_path.lower().endswith('.rar') else 'zip')
 
     session_manager = SessionManager('test_sessions.json')
 
@@ -498,9 +520,8 @@ def benchmark(args, file_path) -> None:
         print("Nenhum resultado de teste disponível.")
 
     # Limpa arquivo de teste
-    if os.path.exists(file_path):
+    if file_path in ['benchmark.zip', 'benchmark.rar'] and os.path.exists(file_path):
         os.remove(file_path)
-
 
 # Função para formatar e exibir a tabela de resultados
 def formatar_tabela(dados):
@@ -594,14 +615,22 @@ def main() -> None:
     # Grupo para continuar um ataque
     continue_group = parser.add_argument_group('Continuar Ataque', 'Argumentos para continuar uma busca existente')
     continue_group.add_argument("--continue", dest='continue_file', nargs='?', const=True, help="Continue a última sessão para o ARQUIVO especificado.")
+
+    # Argumentos comuns
     parser.add_argument("--session-file", default="cracker_sessions.json", help="Ficheiro para guardar as sessões.")
     parser.add_argument("--benchmark", action="store_true", help="Testa o desempenho desse processo, no modo sequencial e multi thread, arquivo .zip.")
     parser.add_argument("--benchmark-rar", action="store_true", help="Testa o desempenho desse processo, no modo sequencial e multi thread, arquivo .rar.")
+    parser.add_argument("--test-method", choices=['lib', 'subprocess'], default='lib', help="Método para testar arquivos entre lib (pode ter falso positivos com .rar) e subprocess (geralmente mais lento) (padrão: lib).")
 
     args = parser.parse_args()
     session_manager = SessionManager(args.session_file)
     session_data = None
     target_file = args.arquivo or (args.continue_file if isinstance(args.continue_file, str) else None)
+
+    if args.test_method == 'subprocess':
+        global RAR_METHOD_TEST, ZIP_METHOD_TEST
+        RAR_METHOD_TEST = 'subprocess'
+        ZIP_METHOD_TEST = 'subprocess'
 
     # For test execution only
     if args.benchmark or args.benchmark_rar:
@@ -646,6 +675,10 @@ def main() -> None:
             print(f"[INFO] A senha para este arquivo já foi encontrada: {session_data['found_password']}")
             return
 
+        if session_data['status'] == 'no_password_needed':
+            print(f"[INFO] Este arquivo não requer senha.")
+            return
+
         print("Sessão encontrada. Retomando com os parâmetros guardados...")
 
         # Recria o charset a partir dos argumentos guardados
@@ -664,17 +697,28 @@ def main() -> None:
             parser.error("O argumento 'arquivo' é obrigatório para um novo ataque.")
 
         existing_session = session_manager.get_session(target_file)
-        if existing_session and existing_session['status'] == 'running':
-            choice = input(f"Sessão 'running' encontrada para este arquivo (última atualização: {existing_session['last_update']}).\nDeseja [c]ontinuar, [s]obrescrever ou [a]bortar? ").lower()
-            if choice == 'c':
-                # Reutiliza a lógica de continuar
-                session_data = existing_session
-                print("Retomando sessão existente...")
-            elif choice == 's':
-                print("Sobrescrevendo sessão existente...")
-            else:
-                print("Operação abortada.")
+
+        if existing_session:
+
+            if existing_session['status'] == 'found':
+                print(f"[INFO] A senha para este arquivo já foi encontrada: {existing_session['found_password']}")
                 return
+
+            if existing_session['status'] == 'no_password_needed':
+                print(f"[INFO] Este arquivo não requer senha.")
+                return
+
+            if existing_session['status'] == 'running':
+                choice = input(f"Sessão 'running' encontrada para este arquivo (última atualização: {existing_session['last_update']}).\nDeseja [c]ontinuar, [s]obrescrever ou [a]bortar? ").lower()
+                if choice == 'c':
+                    # Reutiliza a lógica de continuar
+                    session_data = existing_session
+                    print("Retomando sessão existente...")
+                elif choice == 's':
+                    print("Sobrescrevendo sessão existente...")
+                else:
+                    print("Operação abortada.")
+                    return
 
         if not session_data: # Se não escolheu 'c' ou não havia sessão
             print("Iniciando nova sessão...")
