@@ -69,7 +69,6 @@ class SessionManager:
         except FileNotFoundError:
             pass
 
-
 # RAR_METHOD_TEST pode ser 'rarfile' ou 'subprocess'
 # 'subprocess' é mais robusto, mas depende do comando 'unrar' estar instalado
 # 'rarfile' é mais direto, mas pode ter problemas de concorrência em alguns sistemas
@@ -115,10 +114,21 @@ def criar_arquivo_teste(file_path, senha, type='zip'):
 
 # Testar senha RAR usando subprocess para evitar problemas de concorrência
 def testar_senha_rar_subprocess(file_path: str, senha: str) -> bool:
+    """Usa o método 'subprocess' para testar arquivos RAR. Certifique-se de que o comando 'unrar' está instalado."""
     command = ['unrar', 't', f'-p{senha}', '-y', file_path]
     try:
+        # Caso seja a primeira execução, verifica se o arquivo precisa de senha
+        # Não funciona como esperado, cada nova chamada ao método o atribituo é resetado
+        if (not getattr(testar_senha_rar_subprocess, 'first_run_done', False)):
+            command =  ['unrar', 't', '-y', file_path]
+            resultado = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if resultado.returncode == 0:
+                raise PasswordNotNeeded
+            testar_senha_rar_subprocess.first_run_done = True
         resultado = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         return resultado.returncode == 0
+    except PasswordNotNeeded:
+        raise PasswordNotNeeded(f'[INFO] O arquivo {file_path} não precisa de senha.')
     except Exception as e:
         if not getattr(testar_senha_rar_subprocess, 'has_printed_error', False):
             testar_senha_rar_subprocess.has_printed_error = True
@@ -498,10 +508,10 @@ def benchmark(args, file_path) -> None:
     print("\n" + ("-" * 50))
     print("# Paralelos" )
 
-    for workers in [4]: #[2, 4, 8, 16, 32, 64, 128]:
+    for workers in [4, 8, 16, 32, 64, 128]:
         args.workers = workers
 
-        for chunksize in [1]: #, 2, 5, 10, 20, 50]:
+        for chunksize in [1, 2, 5, 10, 20, 50]:
             print("\n" + ("-" * 50))
             print(f"Workers: {args.workers}, Chunksize: {chunksize}")
             print("-" * 50)
@@ -658,7 +668,7 @@ def main() -> None:
     charset = "".join(sorted(list(char_set)))
 
     # Best default chunksize for most scenarios
-    chunksize = 25
+    chunksize = 2
 
     if args.continue_file:
         if not target_file:
