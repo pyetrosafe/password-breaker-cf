@@ -1,2 +1,13 @@
-tqdm==4.67.1
+Brotli==1.1.0
+inflate64==1.0.3
+multivolumefile==0.2.3
+psutil==7.0.0
+py7zr==1.0.0
+pybcj==1.0.6
+pycryptodomex==3.23.0
+pyppmd==1.1.1
+pyzstd==0.17.0
 rarfile==4.2
+texttable==1.7.0
+tqdm==4.67.1
+typing_extensions==4.15.0
